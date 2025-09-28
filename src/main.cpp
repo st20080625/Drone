@@ -47,14 +47,13 @@ float offset_motor_speed = 50;
 
 float kq = 14; //13
 float kw = 10; //10
-float ki = 0; //25
+float ki = 25; //25
 float kq_yaw = 10; //9
 float kw_yaw = 11; //10
 float ki_yaw = 0;
 
 cpp3d::vec3d M(0, 0, 0);
 
-float roll_pid_value, pitch_pid_value, yaw_pid_value;
 float integral_roll = 0, integral_pitch = 0, integral_yaw = 0;
 
 #define SDA_PIN 21
@@ -354,39 +353,6 @@ void loop()
   }}
    
   if(Circle && !prev_Circle){
-    /*if(!is_motor_running){
-      float sum_yaw = 0;
-      float last_r, last_i, last_j, last_k;
-      for(int i = 0; i < 50; ++i){
-        if (bno08x.getSensorEvent(&sensorValue))
-        { 
-          if (sensorValue.sensorId == SH2_GAME_ROTATION_VECTOR)
-          {
-            float r = sensorValue.un.rotationVector.real;
-            float j = -sensorValue.un.rotationVector.i;
-            float i = sensorValue.un.rotationVector.j;
-            float k = sensorValue.un.rotationVector.k;
-
-            sum_yaw += atan2(2 * (r * k + i * j), 1 - 2 * (j * j + k * k)) * 180 / M_PI;
-
-            last_r = r;
-            last_i = i;
-            last_j = j;
-            last_k = k;
-            }
-         }
-         delay(20);
-      }
-      offset_yaw = sum_yaw / 50.0;
-      Serial.print("offset_yaw: ");
-      Serial.println(offset_yaw);
-      q = cpp3d::quaternion(last_r, last_i, last_j, last_k);
-      //q_target = q;
-      integral_roll = 0;
-      integral_pitch = 0;
-      integral_yaw = 0;
-    }*/
-
     is_motor_running = !is_motor_running;
   }
   prev_Circle = Circle;
@@ -477,40 +443,10 @@ void loop()
   motor_speed = offset_motor_speed + map(Ly,-128, 128, -offset_motor_speed, 100-offset_motor_speed);
 
   q_error = q.conjugate() * q_target;
-  //q_error = q_target * q.conjugate();
   q_error = q_error.normalize();
   if(q_error.w < 0){
     q_error = q_error.scalar(-1);
   }
-
-  /*Serial.print("q_error_x: ");
-  Serial.print(q_error.x);
-  Serial.print("q_error_y: ");
-  Serial.print(q_error.y);
-  Serial.print("q_error_z: ");
-  Serial.println(q_error.z);
-
-  Serial.print("dt: ");
-  Serial.println(dt);*/
-
-  
-  float current_roll = atan2(2*(r*i + j*k), 1-2*(i*i + j*j));
-  float current_pitch = asin(2*(r*j - k*i));
-  float current_yaw = atan2(2*(r*k + i*j), 1-2*(j*j + k*k));
-  
-  float e_roll = (pitch_euler - current_roll);
-  float e_pitch = (roll_euler - current_pitch);
-  float e_yaw = (yaw_euler - current_yaw);
-
-  integral_roll += e_roll * dt;
-  integral_pitch += e_pitch * dt;
-  integral_yaw += e_yaw * dt;
-  /*Serial.print("integral_roll: ");
-  Serial.print(integral_roll);
-  Serial.print("integral_pitch: ");
-  Serial.print(integral_pitch);
-  Serial.print("integral_yaw: ");
-  Serial.println(integral_yaw);*/
 
   float w = constrain(q_error.w, -1.0f, 1.0f);
   float angle = 2 * acos(w);
@@ -521,16 +457,15 @@ void loop()
     axis = cpp3d::vec3d(q_error.x / s, q_error.y / s, q_error.z / s);
   }
 
-  /*Serial.print("integral_roll: ");
-  Serial.print(integral_roll);
-  Serial.print(", ");
-  Serial.print("integral_pitch: ");
-  Serial.print(integral_pitch);
-  Serial.print(", ");
-  Serial.print("integral_yaw: ");
-  Serial.println(integral_yaw);
+  integral_roll += axis.x * angle * dt;
+  integral_pitch += axis.y * angle * dt;
+  integral_yaw += axis.z * angle * dt;
+  
+  // 2 / 2 deg = 0.01745 rad
+  if(fabs(axis.x * angle) < 0.01745) integral_roll = 0;
+  if(fabs(axis.y * angle) < 0.01745) integral_pitch = 0;
 
-  Serial.print("integral_roll: ");
+  /*Serial.print("integral_roll: ");
   Serial.print(integral_roll);
   Serial.print(", ");
   Serial.print("integral_pitch: ");
@@ -539,9 +474,9 @@ void loop()
   Serial.print("integral_yaw: ");
   Serial.println(integral_yaw);*/
 
-  M.x = -kq * axis.x * angle + -kw * wx;
-  M.y = -kq * axis.y * angle + -kw * wy;
-  M.z = -kq_yaw * axis.z * angle - kw_yaw * wz; 
+  M.x = -kq * axis.x * angle + -kw * wx -ki * integral_roll;
+  M.y = -kq * axis.y * angle + -kw * wy -ki * integral_pitch;
+  M.z = -kq_yaw * axis.z * angle - kw_yaw * wz -ki_yaw * integral_yaw; 
 
   /*if(lidar->readData(distance, strength, temperature)){
     Serial.print("Distance: ");

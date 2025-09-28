@@ -175,6 +175,13 @@ float quaternion::abs() const
 quaternion quaternion::normalize() const
 {
     float abs = this->abs();
+    if(abs < 1e-6f){
+      return quaternion(
+        this->w,
+        this->x,
+        this->y,
+        this->z);
+    }
     return quaternion(
         this->w / abs,
         this->x / abs,
