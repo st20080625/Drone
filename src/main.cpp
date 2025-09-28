@@ -150,6 +150,13 @@ void calibrate_sensors()
           first_q.y = j;
           first_q.z = k;
           is_first = false;
+          if(first_q.w < 0.0){
+            first_q = first_q.scalar(-1);
+            sum_r += first_q.w;
+            sum_i += first_q.x;
+            sum_j += first_q.y;
+            sum_k += first_q.z;
+          } 
         }else{
           cpp3d::quaternion current_q(r, i, j, k);
           //float dot = first_q.dot(current_q);
@@ -211,6 +218,7 @@ void calc_target(){
   //q_target = q_roll * q_pitch * q_yaw;
   q_target = q_yaw * q_pitch * q_roll;
   q_target = offset_q * q_target;
+  q_target = q_target.normalize();
 }
 
 int deadzone = 18;
@@ -468,7 +476,8 @@ void loop()
 
   motor_speed = offset_motor_speed + map(Ly,-128, 128, -offset_motor_speed, 100-offset_motor_speed);
 
-  q_error = q_target * q.conjugate();
+  q_error = q.conjugate() * q_target;
+  //q_error = q_target * q.conjugate();
   q_error = q_error.normalize();
   if(q_error.w < 0){
     q_error = q_error.scalar(-1);
