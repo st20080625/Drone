@@ -42,21 +42,15 @@ void get_gamepad_data(){
   left = ps5.Left();
 }
 
-float yaw = 0;
-
-float offset_roll = 0;
-float offset_pitch = 0;
-float offset_yaw = 0;
-
 float motor_speed;
 float offset_motor_speed = 50;
 
 float kq = 14; //13
 float kw = 10; //10
-float ki = 1;
+float ki = 0; //25
 float kq_yaw = 10; //9
 float kw_yaw = 11; //10
-float ki_yaw = 1;
+float ki_yaw = 0;
 
 cpp3d::vec3d M(0, 0, 0);
 
@@ -118,6 +112,7 @@ void set_color(uint32_t color){
   }
 }
 
+cpp3d::quaternion offset_q(1, 0, 0, 0);
 void calibrate_sensors()
 {
   uint32_t color = strip.Color(255, 0, 0);
@@ -127,12 +122,17 @@ void calibrate_sensors()
   strip.show();
   Serial.println("Calibrating sensors. Keep the drone level...");
   delay(2000);
-  float sum_roll = 0;
-  float sum_pitch = 0;
-  float sum_yaw = 0;
+  float sum_r = 0;
+  float sum_i = 0;
+  float sum_j = 0;
+  float sum_k = 0;
   int samples = 50;
 
-  for (int i = 0; i < samples; i++)
+  cpp3d::quaternion first_q(1, 0, 0, 0);
+  bool is_first = true;
+  int collected = 0;
+  int N = 50;
+  while(collected < N)
   {
     //sh2_SensorValue_t sensorValue;
     if (bno08x.getSensorEvent(&sensorValue))
@@ -143,38 +143,59 @@ void calibrate_sensors()
         float j = -sensorValue.un.rotationVector.i;
         float i = sensorValue.un.rotationVector.j;
         float k = sensorValue.un.rotationVector.k;
-
-        sum_roll += atan2(2 * (r * i + j * k), 1 - 2 * (i * i + j * j)) * 180 / M_PI;
-        sum_pitch += asin(2 * (r * j - k * i)) * 180 / M_PI;
-        sum_yaw += atan2(2 * (r * k + i * j), 1 - 2 * (j * j + k * k)) * 180 / M_PI;
+        
+        if(is_first){
+          first_q.w = r;
+          first_q.x = i;
+          first_q.y = j;
+          first_q.z = k;
+          is_first = false;
+        }else{
+          cpp3d::quaternion current_q(r, i, j, k);
+          //float dot = first_q.dot(current_q);
+          if(current_q.w < 0.0){
+            current_q = current_q.scalar(-1.0);
+          }
+          sum_r += current_q.w;
+          sum_i += current_q.x;
+          sum_j += current_q.y;
+          sum_k += current_q.z;
+          collected++;
+        }
       }
     }
     delay(20);
   }
 
-  offset_roll = sum_roll / samples;
-  offset_pitch = sum_pitch / samples;
-  offset_yaw = sum_yaw / samples;
+  if(collected > 0){
+    offset_q.w = sum_r / collected;
+    offset_q.x = sum_i / collected;
+    offset_q.y = sum_j / collected;
+    offset_q.z = sum_k / collected;
+    offset_q = offset_q.normalize();
+  }
 
   Serial.println("Calibration complete!");
-  Serial.print("Roll offset: ");
-  Serial.print(offset_roll);
-  Serial.print(" | Pitch offset: ");
-  Serial.print(offset_pitch);
-  Serial.print(" | Yaw offset: ");
-  Serial.println(offset_yaw);
+  Serial.print("Offset_R: ");
+  Serial.print(offset_q.w);
+  Serial.print(" | Offset_I: ");
+  Serial.print(offset_q.x);
+  Serial.print(" | Offset_J: ");
+  Serial.print(offset_q.y);
+  Serial.print(" | Offset_K: ");
+  Serial.println(offset_q.z);
   was_tilt = false;
 }
 
 float r, i, j, k;
 float wx, wy, wz;
 float ax, ay, az;
+float yaw = 0;
 
+float roll_euler, pitch_euler, yaw_euler;
 void calc_target(){
-  //float roll_euler = up * -40 + down * 40 - offset_roll;
-  //float pitch_euler = left * -40 + right * 40 - offset_pitch;
-  float pitch_euler = map(Ry, -128, 127, -12, 12) + offset_pitch;
-  float roll_euler = map(Rx, -128, 127, -12, 12) + offset_roll;
+  pitch_euler = map(Ry, -128, 127, -12, 12);
+  roll_euler = map(Rx, -128, 127, -12, 12);
 
   yaw += (R1 * -0.5 + L1 * 0.5) ;
   if (yaw > 180){
@@ -182,14 +203,14 @@ void calc_target(){
   }else if (yaw < -180){
     yaw += 360;
   }
-  
-  float yaw_euluer = yaw + offset_yaw;
+  yaw_euler = yaw;
 
   cpp3d::quaternion q_roll(cos(roll_euler * M_PI / 180.0 / 2), sin(roll_euler * M_PI / 180.0 / 2), 0, 0);
   cpp3d::quaternion q_pitch(cos(pitch_euler * M_PI / 180.0 / 2), 0, sin(pitch_euler * M_PI / 180.0 / 2), 0);
-  cpp3d::quaternion q_yaw(cos(yaw_euluer * M_PI / 180.0 / 2), 0, 0, sin(yaw_euluer * M_PI / 180.0 / 2));
+  cpp3d::quaternion q_yaw(cos(yaw_euler * M_PI / 180.0 / 2), 0, 0, sin(yaw_euler * M_PI / 180.0 / 2));
   //q_target = q_roll * q_pitch * q_yaw;
   q_target = q_yaw * q_pitch * q_roll;
+  q_target = offset_q * q_target;
 }
 
 int deadzone = 18;
@@ -211,7 +232,6 @@ void setup()
 {
   setCpuFrequencyMhz(240);
   Serial.begin(115200);
-
   strip.begin();
   strip.setBrightness(50);
   strip.clear();
@@ -326,6 +346,39 @@ void loop()
   }}
    
   if(Circle && !prev_Circle){
+    /*if(!is_motor_running){
+      float sum_yaw = 0;
+      float last_r, last_i, last_j, last_k;
+      for(int i = 0; i < 50; ++i){
+        if (bno08x.getSensorEvent(&sensorValue))
+        { 
+          if (sensorValue.sensorId == SH2_GAME_ROTATION_VECTOR)
+          {
+            float r = sensorValue.un.rotationVector.real;
+            float j = -sensorValue.un.rotationVector.i;
+            float i = sensorValue.un.rotationVector.j;
+            float k = sensorValue.un.rotationVector.k;
+
+            sum_yaw += atan2(2 * (r * k + i * j), 1 - 2 * (j * j + k * k)) * 180 / M_PI;
+
+            last_r = r;
+            last_i = i;
+            last_j = j;
+            last_k = k;
+            }
+         }
+         delay(20);
+      }
+      offset_yaw = sum_yaw / 50.0;
+      Serial.print("offset_yaw: ");
+      Serial.println(offset_yaw);
+      q = cpp3d::quaternion(last_r, last_i, last_j, last_k);
+      //q_target = q;
+      integral_roll = 0;
+      integral_pitch = 0;
+      integral_yaw = 0;
+    }*/
+
     is_motor_running = !is_motor_running;
   }
   prev_Circle = Circle;
@@ -355,6 +408,7 @@ void loop()
 
   sensor_current_time = millis();
   dt = (sensor_current_time - sensor_previous_time) / 1000.0;
+  dt = max(dt, 0.0002f);
   sensor_previous_time = sensor_current_time;
   if (bno08x.getSensorEvent(&sensorValue))
   {
@@ -382,11 +436,10 @@ void loop()
       az = sensorValue.un.accelerometer.z;
     }
   }
-
   q = cpp3d::quaternion(r, i, j, k);
-
-  float roll = atan2(2 * (r * i + j * k), 1 - 2 * (i * i + j * j)) * 180 / M_PI - offset_roll;
-  float pitch = asin(2 * (r * j - k * i)) * 180 / M_PI - offset_pitch;
+  float roll = atan2(2*(r*i + j*k), 1-2*(i*i + j*j)) * 180/M_PI;
+  float pitch = asin(2*(r*j - k*i)) * 180/M_PI;
+  
   if (roll < -30 || roll > 30 || pitch < -30 || pitch > 30)
   {
     Serial.println("Drone is tilted too much, stopping motors.");
@@ -400,10 +453,15 @@ void loop()
     was_tilt = true;
     roll = 0;
     pitch = 0;
-    r = 0;
+    yaw = 0;
+    r = 1;
     i = 0;
     j = 0;
     k = 0;
+    q_target = cpp3d::quaternion(1, 0, 0, 0);
+    integral_roll = 0;
+    integral_pitch = 0;
+    integral_yaw = 0;
     Serial.println("Please calibrate the drone.");
     return;
   }
@@ -416,10 +474,35 @@ void loop()
     q_error = q_error.scalar(-1);
   }
 
-  integral_roll += q_error.x * dt;
-  integral_pitch += q_error.y * dt;
-  integral_yaw += q_error.z * dt;
+  /*Serial.print("q_error_x: ");
+  Serial.print(q_error.x);
+  Serial.print("q_error_y: ");
+  Serial.print(q_error.y);
+  Serial.print("q_error_z: ");
+  Serial.println(q_error.z);
+
+  Serial.print("dt: ");
+  Serial.println(dt);*/
+
   
+  float current_roll = atan2(2*(r*i + j*k), 1-2*(i*i + j*j));
+  float current_pitch = asin(2*(r*j - k*i));
+  float current_yaw = atan2(2*(r*k + i*j), 1-2*(j*j + k*k));
+  
+  float e_roll = (pitch_euler - current_roll);
+  float e_pitch = (roll_euler - current_pitch);
+  float e_yaw = (yaw_euler - current_yaw);
+
+  integral_roll += e_roll * dt;
+  integral_pitch += e_pitch * dt;
+  integral_yaw += e_yaw * dt;
+  /*Serial.print("integral_roll: ");
+  Serial.print(integral_roll);
+  Serial.print("integral_pitch: ");
+  Serial.print(integral_pitch);
+  Serial.print("integral_yaw: ");
+  Serial.println(integral_yaw);*/
+
   float w = constrain(q_error.w, -1.0f, 1.0f);
   float angle = 2 * acos(w);
   float s = sqrt(1 - w * w);
@@ -429,15 +512,27 @@ void loop()
     axis = cpp3d::vec3d(q_error.x / s, q_error.y / s, q_error.z / s);
   }
 
-  if(angle < 0.001){
-    integral_roll = 0;
-    integral_pitch = 0;
-    integral_yaw = 0;
-  }
+  /*Serial.print("integral_roll: ");
+  Serial.print(integral_roll);
+  Serial.print(", ");
+  Serial.print("integral_pitch: ");
+  Serial.print(integral_pitch);
+  Serial.print(", ");
+  Serial.print("integral_yaw: ");
+  Serial.println(integral_yaw);
 
-  M.x = -kq * axis.x * angle + -kw * wx -ki * integral_roll;
-  M.y = -kq * axis.y * angle + -kw * wy -ki * integral_pitch;
-  M.z = -kq_yaw * axis.z * angle - kw_yaw * wz -ki * integral_yaw; 
+  Serial.print("integral_roll: ");
+  Serial.print(integral_roll);
+  Serial.print(", ");
+  Serial.print("integral_pitch: ");
+  Serial.print(integral_pitch);
+  Serial.print(", ");
+  Serial.print("integral_yaw: ");
+  Serial.println(integral_yaw);*/
+
+  M.x = -kq * axis.x * angle + -kw * wx;
+  M.y = -kq * axis.y * angle + -kw * wy;
+  M.z = -kq_yaw * axis.z * angle - kw_yaw * wz; 
 
   /*if(lidar->readData(distance, strength, temperature)){
     Serial.print("Distance: ");

@@ -158,6 +158,11 @@ quaternion quaternion::conjugate() const
         -this->z);
 }
 
+float quaternion::dot(const quaternion &a) const
+{
+    return this->w * a.w + this->x * a.x + this->y * a.y + this->z * a.z;
+}
+
 float quaternion::abs() const
 {
     return sqrt(

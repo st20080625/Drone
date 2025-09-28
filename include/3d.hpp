@@ -40,6 +40,7 @@ public:
     quaternion scalar(float k) const;
     quaternion mul(const quaternion &a) const;
     quaternion conjugate() const;
+    float dot(const quaternion &a) const;
     float abs() const;
     quaternion normalize() const;
     void reset();
