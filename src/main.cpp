@@ -47,9 +47,9 @@ float offset_motor_speed = 50;
 
 float kq = 14; //13
 float kw = 10; //10
-float ki = 25; //25
-float kq_yaw = 10; //9
-float kw_yaw = 11; //10
+float ki = 15; //25
+float kq_yaw = 23; //9
+float kw_yaw = 13; //10
 float ki_yaw = 0;
 
 cpp3d::vec3d M(0, 0, 0);
@@ -461,10 +461,11 @@ void loop()
   integral_pitch += axis.y * angle * dt;
   integral_yaw += axis.z * angle * dt;
   
-  // 2 / 2 deg = 0.01745 rad
+  // 1 deg = 0.01745 rad
   if(fabs(axis.x * angle) < 0.01745) integral_roll = 0;
   if(fabs(axis.y * angle) < 0.01745) integral_pitch = 0;
-
+  // 5 deg = 0.0873 rad
+  if(fabs(axis.z * angle) < 0.0873) integral_yaw = 0;
   /*Serial.print("integral_roll: ");
   Serial.print(integral_roll);
   Serial.print(", ");
@@ -492,7 +493,7 @@ void loop()
   motor_value1 = constrain(motor_value1, 0, 100);
   motor_value2 = constrain(motor_value2, 0, 100);
   motor_value3 = constrain(motor_value3, 0, 100);
-
+  
   set_motor(0, motor_value0);
   set_motor(1, motor_value1);
   set_motor(2, motor_value2);
