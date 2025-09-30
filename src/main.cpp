@@ -200,8 +200,8 @@ float yaw = 0;
 
 float roll_euler, pitch_euler, yaw_euler;
 void calc_target(){
-  pitch_euler = map(Ry, -128, 127, -12, 12);
-  roll_euler = map(Rx, -128, 127, -12, 12);
+  pitch_euler = map(Ry, -128, 127, -9, 9);
+  roll_euler = map(Rx, -128, 127, -9, 9);
 
   yaw += (R1 * -0.5 + L1 * 0.5) ;
   if (yaw > 180){
