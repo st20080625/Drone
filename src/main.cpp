@@ -45,12 +45,18 @@ void get_gamepad_data(){
 float motor_speed;
 float offset_motor_speed = 50;
 
+// kq = P gain, kw = D gain
+// roll, pitch -> PID
+// yaw -> PD
 float kq = 14; //13
 float kw = 10; //10
 float ki = 15; //25
 float kq_yaw = 23; //9
 float kw_yaw = 13; //10
 float ki_yaw = 0;
+
+float hover_kp = 0;
+float hover_kd = 0;
 
 cpp3d::vec3d M(0, 0, 0);
 
@@ -230,7 +236,8 @@ TFLuna* lidar = nullptr;
 uint16_t distance = 0;
 uint16_t strength = 0;
 float temperature = 0.0;
-uint16_t target_distance = 30;
+uint16_t offset_distance = 0;
+uint16_t target_distance = 0;
 
 int delay_time = 500;
 unsigned long prev_millis = 0;
@@ -286,8 +293,8 @@ void setup()
       delay(10);
   }
 
-  //lidar = new TFLuna(Serial2, RX_PIN, TX_PIN);
-  //Serial.println("TFLuna Lidar initialized.");
+  lidar = new TFLuna(Serial2, RX_PIN, TX_PIN);
+  Serial.println("TFLuna Lidar initialized.");
   ledcSetup(0, 50, 16);
   ledcSetup(1, 50, 16);
   ledcSetup(2, 50, 16);
@@ -479,10 +486,10 @@ void loop()
   M.y = -kq * axis.y * angle + -kw * wy -ki * integral_pitch;
   M.z = -kq_yaw * axis.z * angle - kw_yaw * wz -ki_yaw * integral_yaw; 
 
-  /*if(lidar->readData(distance, strength, temperature)){
+  if(lidar->readData(distance, strength, temperature)){
     Serial.print("Distance: ");
     Serial.println(distance);
-  }*/
+  }
 
   motor_value0 = (motor_speed + M.x + M.y + M.z);
   motor_value1 = (motor_speed - M.x + M.y - M.z);
@@ -507,10 +514,10 @@ void loop()
   Serial.print(",");
   Serial.print(q_target.z);
   Serial.print(",");*/
-  Serial.print(" Motor0: "); Serial.print(motor_value0);
+  /*Serial.print(" Motor0: "); Serial.print(motor_value0);
   Serial.print(" Motor1: "); Serial.print(motor_value1);
   Serial.print(" Motor2: "); Serial.print(motor_value2);
-  Serial.print(" Motor3: "); Serial.println(motor_value3);
+  Serial.print(" Motor3: "); Serial.println(motor_value3);*/
   /*Serial.print("Left: "); Serial.println(left);
   Serial.print("Right: "); Serial.println(right);
   Serial.print("Up: "); Serial.println(up);
