@@ -64,10 +64,10 @@ int pwm_pin1 = 12;
 int pwm_pin2 = 27;
 int pwm_pin3 = 26;
 
-int motor_value0 = 0;
-int motor_value1 = 0;
-int motor_value2 = 0;
-int motor_value3 = 0;
+float motor_value0 = 0;
+float motor_value1 = 0;
+float motor_value2 = 0;
+float motor_value3 = 0;
 
 Adafruit_BNO08x bno08x;
 
@@ -84,11 +84,22 @@ unsigned long sensor_current_time;
 
 sh2_SensorValue_t sensorValue;
 
+// frequency = 4Khz (4882.81hz)
+// resolution = 14bit (16383)
+// min_pulse = 125 us
+// max_pulse = 250 us
+// period = 204.8 us    1/4882.81
+
+// frequenct = 2.67Khz (2441.41hz)
+// resolution = 15bit (32768)
+// period = 409.6 us
 void set_motor(int ch, float on_pulse_rate)
 {
-  float duty = (1000 + 10 * on_pulse_rate) / 20000;
-  uint16_t value = duty * 65535;
-  value = round(value);
+  float on_pulse_normalized = on_pulse_rate / 1000.0; //  0.0 ~ 1.0
+  float pulse_width = (125.0 + on_pulse_normalized * 125.0);
+  //Serial.println(pulse_width);
+  float  duty = (pulse_width / 409.6) * 32768;
+  uint16_t value = round(duty);
   ledcWrite(ch, value);
 }
 
@@ -120,7 +131,7 @@ void calibrate_sensors()
   } 
   strip.show();
   Serial.println("Calibrating sensors. Keep the drone level...");
-  delay(2000);
+  //delay(2000);
   float sum_r = 0;
   float sum_i = 0;
   float sum_j = 0;
@@ -288,10 +299,10 @@ void setup()
 
   //lidar = new TFLuna(Serial2, RX_PIN, TX_PIN);
   //Serial.println("TFLuna Lidar initialized.");
-  ledcSetup(0, 50, 16);
-  ledcSetup(1, 50, 16);
-  ledcSetup(2, 50, 16);
-  ledcSetup(3, 50, 16);
+  ledcSetup(0, 2441.41, 15);
+  ledcSetup(1, 2441.41, 15);
+  ledcSetup(2, 2441.41, 15);
+  ledcSetup(3, 2441.41, 15);
 
   ledcAttachPin(pwm_pin0, 0);
   ledcAttachPin(pwm_pin1, 1);
@@ -440,7 +451,7 @@ void loop()
     return;
   }
 
-  motor_speed = offset_motor_speed + map(Ly,-128, 128, -offset_motor_speed, 100-offset_motor_speed);
+  motor_speed = offset_motor_speed + map(Ly,-128, 127, -offset_motor_speed, 100-offset_motor_speed);
 
   q_error = q.conjugate() * q_target;
   q_error = q_error.normalize();
@@ -489,11 +500,21 @@ void loop()
   motor_value2 = (motor_speed - M.x - M.y + M.z);
   motor_value3 = (motor_speed + M.x - M.y - M.z);
 
-  motor_value0 = constrain(motor_value0, 0, 100);
-  motor_value1 = constrain(motor_value1, 0, 100);
-  motor_value2 = constrain(motor_value2, 0, 100);
-  motor_value3 = constrain(motor_value3, 0, 100);
+  motor_value0 = motor_value0 * 10.0;
+  motor_value1 = motor_value1 * 10.0;
+  motor_value2 = motor_value2 * 10.0;
+  motor_value3 = motor_value3 * 10.0;
+
+  motor_value0 = constrain(motor_value0, 0.0, 1000.0);
+  motor_value1 = constrain(motor_value1, 0.0, 1000.0);
+  motor_value2 = constrain(motor_value2, 0.0, 1000.0);
+  motor_value3 = constrain(motor_value3, 0.0, 1000.0);
   
+  // motor_value0 = 1000.0;
+  // motor_value1 = 1000.0;
+  // motor_value2 = 1000.0;
+  // motor_value3 = 1000.0;
+
   set_motor(0, motor_value0);
   set_motor(1, motor_value1);
   set_motor(2, motor_value2);
