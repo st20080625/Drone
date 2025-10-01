@@ -1,12 +1,12 @@
-#include <esp_system.h>
-#include <Arduino.h>
-#include <ps5Controller.h>
-#include <Adafruit_BNO08x.h>
-#include <Wire.h>
 #include "3d.hpp"
-#include <math.h>
 #include "TFLuna_lidar.hpp"
+#include <Adafruit_BNO08x.h>
 #include <Adafruit_NeoPixel.h>
+#include <Arduino.h>
+#include <Wire.h>
+#include <esp_system.h>
+#include <math.h>
+#include <ps5Controller.h>
 
 int Lx = 0;
 int Ly = 0;
@@ -15,25 +15,27 @@ int Ry = 0;
 int Square = 0;
 int Circle = 0;
 int prev_Circle = 0;
+int prev_Triangle = 0;
 int R1 = 0;
 int L1 = 0;
 int up = 0;
 int down = 0;
 int right = 0;
 int left = 0;
-  
+
 bool calibration_done = false;
 bool is_calibration = false;
 bool is_motor_running = false;
 bool was_tilt = false;
 
-void get_gamepad_data(){
+void get_gamepad_data() {
   Lx = ps5.LStickX();
   Ly = ps5.LStickY();
   Rx = ps5.RStickX();
   Ry = ps5.RStickY();
   Square = ps5.Square();
   Circle = ps5.Circle();
+  Triangle = ps5.Triangle();
   R1 = ps5.R1();
   L1 = ps5.L1();
   up = ps5.Up();
@@ -48,11 +50,11 @@ float offset_motor_speed = 50;
 // kq = P gain, kw = D gain
 // roll, pitch -> PID
 // yaw -> PD
-float kq = 14; //13
-float kw = 10; //10
-float ki = 15; //25
-float kq_yaw = 23; //9
-float kw_yaw = 13; //10
+float kq = 14;     // 13
+float kw = 10;     // 10
+float ki = 15;     // 25
+float kq_yaw = 23; // 9
+float kw_yaw = 13; // 10
 float ki_yaw = 0;
 
 float hover_kp = 0;
@@ -90,43 +92,56 @@ unsigned long sensor_current_time;
 
 sh2_SensorValue_t sensorValue;
 
-void set_motor(int ch, float on_pulse_rate)
-{
+void set_motor(int ch, float on_pulse_rate) {
   float duty = (1000 + 10 * on_pulse_rate) / 20000;
   uint16_t value = duty * 65535;
   value = round(value);
   ledcWrite(ch, value);
 }
 
-
 #define LED_PIN 4
 #define LED_COUNT 21
 
 Adafruit_NeoPixel strip = Adafruit_NeoPixel(LED_COUNT, LED_PIN, NEO_GRB);
 
-uint32_t Red = strip.Color(255, 0, 0); // State: Motor Stop
-uint32_t Blue = strip.Color(0, 0, 255); // State: Calibrated
-uint32_t Green = strip.Color(0, 255, 0); // State: Can Move(Waiting Start)
-uint32_t Cyan = strip.Color(0, 156, 209); // State: Motor Spinning
+uint32_t Red = strip.Color(255, 0, 0);     // State: Motor Stop
+uint32_t Blue = strip.Color(0, 0, 255);    // State: Calibrated
+uint32_t Green = strip.Color(0, 255, 0);   // State: Can Move(Waiting Start)
+uint32_t Cyan = strip.Color(0, 156, 209);  // State: Motor Spinning
 uint32_t Orange = strip.Color(255, 92, 0); // State: Tilted Drone
-uint32_t Purple = strip.Color(128, 0, 128); // State: Controller is not connected
+uint32_t Purple =
+    strip.Color(128, 0, 128); // State: Controller is not connected
+uint32_t Lime =
+    strip.Color(172, 255, 47); // State: Auto Hover Mode
+                               // This color is used between after calibration
+                               // and before motor starts.
 
-void set_color(uint32_t color){
-  for(int i = 0; i < LED_COUNT; ++i){
+#define RX_PIN 16
+#define TX_PIN 17
+
+TFLuna *lidar = nullptr;
+
+uint16_t distance = 0;
+uint16_t strength = 0;
+float temperature = 0.0;
+bool is_auto_hover = false;
+uint16_t offset_distance = 0;
+J uint16_t target_distance = 0;
+
+void set_color(uint32_t color) {
+  for (int i = 0; i < LED_COUNT; ++i) {
     strip.setPixelColor(i, color);
   }
 }
 
 cpp3d::quaternion offset_q(1, 0, 0, 0);
-void calibrate_sensors()
-{
+void calibrate_sensors() {
   uint32_t color = strip.Color(255, 0, 0);
-  for(int i = 0; i < LED_COUNT; ++i){
+  for (int i = 0; i < LED_COUNT; ++i) {
     strip.setPixelColor(i, color);
-  } 
+  }
   strip.show();
   Serial.println("Calibrating sensors. Keep the drone level...");
-  delay(2000);
   float sum_r = 0;
   float sum_i = 0;
   float sum_j = 0;
@@ -137,35 +152,35 @@ void calibrate_sensors()
   bool is_first = true;
   int collected = 0;
   int N = 50;
-  while(collected < N)
-  {
-    //sh2_SensorValue_t sensorValue;
-    if (bno08x.getSensorEvent(&sensorValue))
-    {
-      if (sensorValue.sensorId == SH2_GAME_ROTATION_VECTOR)
-      {
+
+  uint16_t sum_distance = 0;
+  int collected_distance = 0;
+  while (collected < N) {
+    // sh2_SensorValue_t sensorValue;
+    if (bno08x.getSensorEvent(&sensorValue)) {
+      if (sensorValue.sensorId == SH2_GAME_ROTATION_VECTOR) {
         float r = sensorValue.un.rotationVector.real;
         float j = -sensorValue.un.rotationVector.i;
         float i = sensorValue.un.rotationVector.j;
         float k = sensorValue.un.rotationVector.k;
-        
-        if(is_first){
+
+        if (is_first) {
           first_q.w = r;
           first_q.x = i;
           first_q.y = j;
           first_q.z = k;
           is_first = false;
-          if(first_q.w < 0.0){
+          if (first_q.w < 0.0) {
             first_q = first_q.scalar(-1);
             sum_r += first_q.w;
             sum_i += first_q.x;
             sum_j += first_q.y;
             sum_k += first_q.z;
-          } 
-        }else{
+          }
+        } else {
           cpp3d::quaternion current_q(r, i, j, k);
-          //float dot = first_q.dot(current_q);
-          if(current_q.w < 0.0){
+          // float dot = first_q.dot(current_q);
+          if (current_q.w < 0.0) {
             current_q = current_q.scalar(-1.0);
           }
           sum_r += current_q.w;
@@ -176,15 +191,25 @@ void calibrate_sensors()
         }
       }
     }
+    while (collected_distance < N) {
+      if (lidar->readData(distance, strength, temperature)) {
+        sum_distance += distance;
+        collected_distance++;
+      }
+    }
     delay(20);
   }
 
-  if(collected > 0){
+  if (collected > 0) {
     offset_q.w = sum_r / collected;
     offset_q.x = sum_i / collected;
     offset_q.y = sum_j / collected;
     offset_q.z = sum_k / collected;
     offset_q = offset_q.normalize();
+  }
+
+  if (collected_distance > 0) {
+    offset_distance = sum_distance / collected_distance;
   }
 
   Serial.println("Calibration complete!");
@@ -195,7 +220,9 @@ void calibrate_sensors()
   Serial.print(" | Offset_J: ");
   Serial.print(offset_q.y);
   Serial.print(" | Offset_K: ");
-  Serial.println(offset_q.z);
+  Serial.print(offset_q.z);
+  Serial.print(" | Offset_Distance: ");
+  Serial.println(offset_distance);
   was_tilt = false;
 }
 
@@ -205,22 +232,25 @@ float ax, ay, az;
 float yaw = 0;
 
 float roll_euler, pitch_euler, yaw_euler;
-void calc_target(){
+void calc_target() {
   pitch_euler = map(Ry, -128, 127, -9, 9);
   roll_euler = map(Rx, -128, 127, -9, 9);
 
-  yaw += (R1 * -0.5 + L1 * 0.5) ;
-  if (yaw > 180){
+  yaw += (R1 * -0.5 + L1 * 0.5);
+  if (yaw > 180) {
     yaw -= 360;
-  }else if (yaw < -180){
+  } else if (yaw < -180) {
     yaw += 360;
   }
   yaw_euler = yaw;
 
-  cpp3d::quaternion q_roll(cos(roll_euler * M_PI / 180.0 / 2), sin(roll_euler * M_PI / 180.0 / 2), 0, 0);
-  cpp3d::quaternion q_pitch(cos(pitch_euler * M_PI / 180.0 / 2), 0, sin(pitch_euler * M_PI / 180.0 / 2), 0);
-  cpp3d::quaternion q_yaw(cos(yaw_euler * M_PI / 180.0 / 2), 0, 0, sin(yaw_euler * M_PI / 180.0 / 2));
-  //q_target = q_roll * q_pitch * q_yaw;
+  cpp3d::quaternion q_roll(cos(roll_euler * M_PI / 180.0 / 2),
+                           sin(roll_euler * M_PI / 180.0 / 2), 0, 0);
+  cpp3d::quaternion q_pitch(cos(pitch_euler * M_PI / 180.0 / 2), 0,
+                            sin(pitch_euler * M_PI / 180.0 / 2), 0);
+  cpp3d::quaternion q_yaw(cos(yaw_euler * M_PI / 180.0 / 2), 0, 0,
+                          sin(yaw_euler * M_PI / 180.0 / 2));
+  // q_target = q_roll * q_pitch * q_yaw;
   q_target = q_yaw * q_pitch * q_roll;
   q_target = offset_q * q_target;
   q_target = q_target.normalize();
@@ -228,22 +258,10 @@ void calc_target(){
 
 int deadzone = 18;
 
-#define RX_PIN 16
-#define TX_PIN 17
-
-TFLuna* lidar = nullptr;
-
-uint16_t distance = 0;
-uint16_t strength = 0;
-float temperature = 0.0;
-uint16_t offset_distance = 0;
-uint16_t target_distance = 0;
-
 int delay_time = 500;
 unsigned long prev_millis = 0;
 
-void setup()
-{
+void setup() {
   setCpuFrequencyMhz(240);
   Serial.begin(115200);
   strip.begin();
@@ -251,45 +269,43 @@ void setup()
   strip.clear();
   strip.show();
 
-  ps5.begin("A0:FA:9C:2B:D4:DD"); //24:a6:fa:a4:fe:fe, A0:FA:9C:2B:D4:DD
+  ps5.begin("A0:FA:9C:2B:D4:DD"); // 24:a6:fa:a4:fe:fe, A0:FA:9C:2B:D4:DD
   Serial.println("PS5 Controller connectiong...");
 
   Wire.begin(SDA_PIN, SCL_PIN);
 
-  if (!bno08x.begin_I2C(0x4B))
-  {
+  if (!bno08x.begin_I2C(0x4B)) {
     Serial.println("BNO08x not detected");
     while (1)
       delay(10);
   }
   Serial.println("BNO08x detected!");
 
-  //if (!bno08x.enableReport(SH2_ROTATION_VECTOR, 5000))
+  // if (!bno08x.enableReport(SH2_ROTATION_VECTOR, 5000))
   //{
-    //Serial.println("Failed to enable rotation vector");
-    //while (1)
-      //delay(10);
+  // Serial.println("Failed to enable rotation vector");
+  // while (1)
+  // delay(10);
   //}
-  //Serial.println("Rotation Vector Report Enabled!");
+  // Serial.println("Rotation Vector Report Enabled!");
 
-  if (!bno08x.enableReport(SH2_GAME_ROTATION_VECTOR, 20000))
-  {
+  if (!bno08x.enableReport(SH2_GAME_ROTATION_VECTOR, 20000)) {
     Serial.println("Failed to enable game rotation vector");
-    while(1)
+    while (1)
       delay(10);
   }
   Serial.println("Game Rotation Vector Report Enabled!");
 
-  if(!bno08x.enableReport(SH2_GYROSCOPE_CALIBRATED, 20000)){
+  if (!bno08x.enableReport(SH2_GYROSCOPE_CALIBRATED, 20000)) {
     Serial.println("Failed to enable gyroscope report");
-    while(1)
+    while (1)
       delay(10);
   }
   Serial.println("Gyroscope Report Enabled!");
 
-  if(!bno08x.enableReport(SH2_ACCELEROMETER, 20000)){
+  if (!bno08x.enableReport(SH2_ACCELEROMETER, 20000)) {
     Serial.println("Failed to enable linear_acceleration report");
-    while(1)
+    while (1)
       delay(10);
   }
 
@@ -317,232 +333,410 @@ void setup()
   delay(1000);
 }
 
-void loop()
-{
+void loop() {
   set_color(Purple);
-  if(!ps5.isConnected()){
+  if (!ps5.isConnected()) {
     set_motor(0, 0);
     set_motor(1, 0);
     set_motor(2, 0);
     set_motor(3, 0);
-    //Serial.println("PS5 Controller not connected!");
+    // Serial.println("PS5 Controller not connected!");
     strip.show();
     return;
   }
 
   get_gamepad_data();
-  if(Rx < deadzone && Rx > -deadzone){
+  if (Rx < deadzone && Rx > -deadzone) {
     Rx = 0;
   }
-  if(Ry < deadzone && Ry > -deadzone){
+  if (Ry < deadzone && Ry > -deadzone) {
     Ry = 0;
   }
 
   calc_target();
   strip.setBrightness(50);
-  if(!calibration_done){
+  if (!calibration_done) {
     set_color(Red);
   }
-  if(calibration_done){
+  if (calibration_done) {
     set_color(Blue);
   }
-  if(is_motor_running){
+  if (is_auto_hover) {
+    set_color(Lime);
+  }
+  if (is_motor_running) {
     set_color(Cyan);
   }
   unsigned long current_millis = millis();
-  if(was_tilt){
-  if(current_millis - prev_millis >= delay_time){
-    strip.setBrightness(255);
-    set_color(Orange);
-    prev_millis = current_millis;
-  }else{
-    strip.clear();
-  }}
-   
-  if(Circle && !prev_Circle){
+  if (was_tilt) {
+    if (current_millis - prev_millis >= delay_time) {
+      strip.setBrightness(255);
+      set_color(Orange);
+      prev_millis = current_millis;
+    } else {
+      strip.clear();
+    }
+  }
+
+  if (Circle && !prev_Circle) {
     is_motor_running = !is_motor_running;
   }
   prev_Circle = Circle;
-  
+
+  if (Triangle && !prev_Triangle && !is_motor_running) {
+    is_auto_hover = !is_auto_hover;
+    if (is_auto_hover) {
+      strip.set_color(Lime);
+    }
+  }
+
   strip.show();
 
   is_calibration = Square;
 
-  if(is_calibration && !calibration_done){
+  if (is_calibration && !calibration_done) {
     calibrate_sensors();
     calibration_done = true;
     is_motor_running = false;
     Serial.println("Calibration done.");
   }
 
-  if(!calibration_done){
+  if (!calibration_done) {
     return;
   }
 
-  if(!is_motor_running){
+  if (!is_motor_running) {
     set_motor(0, 0);
     set_motor(1, 0);
     set_motor(2, 0);
     set_motor(3, 0);
     return;
   }
+  if (!is_auto_hover) {
+    sensor_current_time = millis();
+    dt = (sensor_current_time - sensor_previous_time) / 1000.0;
+    dt = max(dt, 0.0002f);
+    sensor_previous_time = sensor_current_time;
+    if (bno08x.getSensorEvent(&sensorValue)) {
+      if (sensorValue.sensorId == SH2_GAME_ROTATION_VECTOR) {
+        r = sensorValue.un.rotationVector.real;
+        j = -sensorValue.un.rotationVector.i;
+        i = sensorValue.un.rotationVector.j;
+        k = sensorValue.un.rotationVector.k;
+      }
+      // if (sensorValue.sensorId == SH2_ROTATION_VECTOR)
+      // cr = sensorValue.un.rotationVector.real;
+      // cj = -sensorValue.un.rotationVector.i;
+      // ci = sensorValue.un.rotationVector.j;
+      // ck = sensorValue.un.rotationVector.k;
 
-  sensor_current_time = millis();
-  dt = (sensor_current_time - sensor_previous_time) / 1000.0;
-  dt = max(dt, 0.0002f);
-  sensor_previous_time = sensor_current_time;
-  if (bno08x.getSensorEvent(&sensorValue))
-  {
-    if (sensorValue.sensorId == SH2_GAME_ROTATION_VECTOR)
-    {
-      r = sensorValue.un.rotationVector.real;
-      j = -sensorValue.un.rotationVector.i;
-      i = sensorValue.un.rotationVector.j;
-      k = sensorValue.un.rotationVector.k;
+      if (sensorValue.sensorId == SH2_GYROSCOPE_CALIBRATED) {
+        wy = sensorValue.un.gyroscope.x;
+        wx = -sensorValue.un.gyroscope.y;
+        wz = -sensorValue.un.gyroscope.z;
+      }
+      if (sensorValue.sensorId == SH2_ACCELEROMETER) {
+        ax = -sensorValue.un.accelerometer.x;
+        ay = -sensorValue.un.accelerometer.y;
+        az = sensorValue.un.accelerometer.z;
+      }
     }
-    //if (sensorValue.sensorId == SH2_ROTATION_VECTOR)
-      //cr = sensorValue.un.rotationVector.real;
-      //cj = -sensorValue.un.rotationVector.i;
-      //ci = sensorValue.un.rotationVector.j;
-      //ck = sensorValue.un.rotationVector.k;
+    q = cpp3d::quaternion(r, i, j, k);
+    float roll =
+        atan2(2 * (r * i + j * k), 1 - 2 * (i * i + j * j)) * 180 / M_PI;
+    float pitch = asin(2 * (r * j - k * i)) * 180 / M_PI;
 
-    if(sensorValue.sensorId == SH2_GYROSCOPE_CALIBRATED){
-      wy = sensorValue.un.gyroscope.x;
-      wx = -sensorValue.un.gyroscope.y;
-      wz = -sensorValue.un.gyroscope.z;
+    if (roll < -30 || roll > 30 || pitch < -30 || pitch > 30) {
+      Serial.println("Drone is tilted too much, stopping motors.");
+      set_motor(0, 0);
+      set_motor(1, 0);
+      set_motor(2, 0);
+      set_motor(3, 0);
+      is_motor_running = false;
+      is_calibration = false;
+      calibration_done = false;
+      was_tilt = true;
+      roll = 0;
+      pitch = 0;
+      yaw = 0;
+      r = 1;
+      i = 0;
+      j = 0;
+      k = 0;
+      q_target = cpp3d::quaternion(1, 0, 0, 0);
+      integral_roll = 0;
+      integral_pitch = 0;
+      integral_yaw = 0;
+      Serial.println("Please calibrate the drone.");
+      return;
     }
-    if(sensorValue.sensorId == SH2_ACCELEROMETER){
-      ax = -sensorValue.un.accelerometer.x;
-      ay = -sensorValue.un.accelerometer.y;
-      az = sensorValue.un.accelerometer.z;
+
+    motor_speed = offset_motor_speed + map(Ly, -128, 128, -offset_motor_speed,
+                                           100 - offset_motor_speed);
+
+    q_error = q.conjugate() * q_target;
+    q_error = q_error.normalize();
+    if (q_error.w < 0) {
+      q_error = q_error.scalar(-1);
     }
+
+    float w = constrain(q_error.w, -1.0f, 1.0f);
+    float angle = 2 * acos(w);
+    float s = sqrt(1 - w * w);
+
+    cpp3d::vec3d axis(0, 0, 0);
+    if (s > 1e-6) {
+      axis = cpp3d::vec3d(q_error.x / s, q_error.y / s, q_error.z / s);
+    }
+
+    integral_roll += axis.x * angle * dt;
+    integral_pitch += axis.y * angle * dt;
+    integral_yaw += axis.z * angle * dt;
+
+    // 1 deg = 0.01745 rad
+    if (fabs(axis.x * angle) < 0.01745)
+      integral_roll = 0;
+    if (fabs(axis.y * angle) < 0.01745)
+      integral_pitch = 0;
+    // 5 deg = 0.0873 rad
+    if (fabs(axis.z * angle) < 0.0873)
+      integral_yaw = 0;
+    /*Serial.print("integral_roll: ");
+    Serial.print(integral_roll);
+    Serial.print(", ");
+    Serial.print("integral_pitch: ");
+    Serial.print(integral_pitch);
+    Serial.print(", ");
+    Serial.print("integral_yaw: ");
+    Serial.println(integral_yaw);*/
+
+    M.x = -kq * axis.x * angle + -kw * wx - ki * integral_roll;
+    M.y = -kq * axis.y * angle + -kw * wy - ki * integral_pitch;
+    M.z = -kq_yaw * axis.z * angle - kw_yaw * wz - ki_yaw * integral_yaw;
+
+    /*if (lidar->readData(distance, strength, temperature)) {
+      Serial.print("Distance: ");
+      Serial.println(distance);
+    }*/
+
+    motor_value0 = (motor_speed + M.x + M.y + M.z);
+    motor_value1 = (motor_speed - M.x + M.y - M.z);
+    motor_value2 = (motor_speed - M.x - M.y + M.z);
+    motor_value3 = (motor_speed + M.x - M.y - M.z);
+
+    motor_value0 = constrain(motor_value0, 0, 100);
+    motor_value1 = constrain(motor_value1, 0, 100);
+    motor_value2 = constrain(motor_value2, 0, 100);
+    motor_value3 = constrain(motor_value3, 0, 100);
+
+    set_motor(0, motor_value0);
+    set_motor(1, motor_value1);
+    set_motor(2, motor_value2);
+    set_motor(3, motor_value3);
+
+    /*Serial.print(q_target.w);
+    Serial.print(",");
+    Serial.print(q_target.x);
+    Serial.print(",");
+    Serial.print(q_target.y);
+    Serial.print(",");
+    Serial.print(q_target.z);
+    Serial.print(",");*/
+    Serial.print(" Motor0: ");
+    Serial.print(motor_value0);
+    Serial.print(" Motor1: ");
+    Serial.print(motor_value1);
+    Serial.print(" Motor2: ");
+    Serial.print(motor_value2);
+    Serial.print(" Motor3: ");
+    Serial.println(motor_value3);
+    /*Serial.print("Left: "); Serial.println(left);
+    Serial.print("Right: "); Serial.println(right);
+    Serial.print("Up: "); Serial.println(up);
+    Serial.print("Down: "); Serial.println(down);*/
+    /*Serial.print("Rx: "); Serial.print(Rx);
+    Serial.print(" Ry: "); Serial.print(Ry);
+    Serial.print(" Lx: "); Serial.print(Lx);
+    Serial.print(" Ly: "); Serial.println(Ly);*/
+    /*Serial.print(r);
+    Serial.print(",");
+    Serial.print(i);
+    Serial.print(",");
+    Serial.print(j);
+    Serial.print(",");
+    Serial.println(k);*/
+    /*Serial.print(",");
+    Serial.print(wx);
+    Serial.print(",");
+    Serial.print(wy);
+    Serial.print(",");
+    Serial.print(wz);
+    Serial.print(",");
+    Serial.print(ax);
+    Serial.print(",");
+    Serial.print(ay);
+    Serial.print(",");
+    Serial.println(az);*/
+  } else {
+    sensor_current_time = millis();
+    dt = (sensor_current_time - sensor_previous_time) / 1000.0;
+    dt = max(dt, 0.0002f);
+    sensor_previous_time = sensor_current_time;
+    if (bno08x.getSensorEvent(&sensorValue)) {
+      if (sensorValue.sensorId == SH2_GAME_ROTATION_VECTOR) {
+        r = sensorValue.un.rotationVector.real;
+        j = -sensorValue.un.rotationVector.i;
+        i = sensorValue.un.rotationVector.j;
+        k = sensorValue.un.rotationVector.k;
+      }
+      // if (sensorValue.sensorId == SH2_ROTATION_VECTOR)
+      // cr = sensorValue.un.rotationVector.real;
+      // cj = -sensorValue.un.rotationVector.i;
+      // ci = sensorValue.un.rotationVector.j;
+      // ck = sensorValue.un.rotationVector.k;
+
+      if (sensorValue.sensorId == SH2_GYROSCOPE_CALIBRATED) {
+        wy = sensorValue.un.gyroscope.x;
+        wx = -sensorValue.un.gyroscope.y;
+        wz = -sensorValue.un.gyroscope.z;
+      }
+      if (sensorValue.sensorId == SH2_ACCELEROMETER) {
+        ax = -sensorValue.un.accelerometer.x;
+        ay = -sensorValue.un.accelerometer.y;
+        az = sensorValue.un.accelerometer.z;
+      }
+    }
+    q = cpp3d::quaternion(r, i, j, k);
+    float roll =
+        atan2(2 * (r * i + j * k), 1 - 2 * (i * i + j * j)) * 180 / M_PI;
+    float pitch = asin(2 * (r * j - k * i)) * 180 / M_PI;
+
+    if (roll < -30 || roll > 30 || pitch < -30 || pitch > 30) {
+      Serial.println("Drone is tilted too much, stopping motors.");
+      set_motor(0, 0);
+      set_motor(1, 0);
+      set_motor(2, 0);
+      set_motor(3, 0);
+      is_motor_running = false;
+      is_calibration = false;
+      calibration_done = false;
+      was_tilt = true;
+      roll = 0;
+      pitch = 0;
+      yaw = 0;
+      r = 1;
+      i = 0;
+      j = 0;
+      k = 0;
+      q_target = cpp3d::quaternion(1, 0, 0, 0);
+      integral_roll = 0;
+      integral_pitch = 0;
+      integral_yaw = 0;
+      Serial.println("Please calibrate the drone.");
+      return;
+    }
+
+    motor_speed = offset_motor_speed + map(Ly, -128, 128, -offset_motor_speed,
+                                           100 - offset_motor_speed);
+
+    q_error = q.conjugate() * q_target;
+    q_error = q_error.normalize();
+    if (q_error.w < 0) {
+      q_error = q_error.scalar(-1);
+    }
+
+    float w = constrain(q_error.w, -1.0f, 1.0f);
+    float angle = 2 * acos(w);
+    float s = sqrt(1 - w * w);
+
+    cpp3d::vec3d axis(0, 0, 0);
+    if (s > 1e-6) {
+      axis = cpp3d::vec3d(q_error.x / s, q_error.y / s, q_error.z / s);
+    }
+
+    integral_roll += axis.x * angle * dt;
+    integral_pitch += axis.y * angle * dt;
+    integral_yaw += axis.z * angle * dt;
+
+    // 1 deg = 0.01745 rad
+    if (fabs(axis.x * angle) < 0.01745)
+      integral_roll = 0;
+    if (fabs(axis.y * angle) < 0.01745)
+      integral_pitch = 0;
+    // 5 deg = 0.0873 rad
+    if (fabs(axis.z * angle) < 0.0873)
+      integral_yaw = 0;
+    /*Serial.print("integral_roll: ");
+    Serial.print(integral_roll);
+    Serial.print(", ");
+    Serial.print("integral_pitch: ");
+    Serial.print(integral_pitch);
+    Serial.print(", ");
+    Serial.print("integral_yaw: ");
+    Serial.println(integral_yaw);*/
+
+    M.x = -kq * axis.x * angle + -kw * wx - ki * integral_roll;
+    M.y = -kq * axis.y * angle + -kw * wy - ki * integral_pitch;
+    M.z = -kq_yaw * axis.z * angle - kw_yaw * wz - ki_yaw * integral_yaw;
+
+    if (lidar->readData(distance, strength, temperature)) {
+      Serial.print("Distance: ");
+      Serial.println(distance);
+    }
+
+    motor_value0 = (motor_speed + M.x + M.y + M.z);
+    motor_value1 = (motor_speed - M.x + M.y - M.z);
+    motor_value2 = (motor_speed - M.x - M.y + M.z);
+    motor_value3 = (motor_speed + M.x - M.y - M.z);
+
+    motor_value0 = constrain(motor_value0, 0, 100);
+    motor_value1 = constrain(motor_value1, 0, 100);
+    motor_value2 = constrain(motor_value2, 0, 100);
+    motor_value3 = constrain(motor_value3, 0, 100);
+
+    set_motor(0, motor_value0);
+    set_motor(1, motor_value1);
+    set_motor(2, motor_value2);
+    set_motor(3, motor_value3);
+
+    /*Serial.print(q_target.w);
+    Serial.print(",");
+    Serial.print(q_target.x);
+    Serial.print(",");
+    Serial.print(q_target.y);
+    Serial.print(",");
+    Serial.print(q_target.z);
+    Serial.print(",");*/
+    /*Serial.print(" Motor0: "); Serial.print(motor_value0);
+    Serial.print(" Motor1: "); Serial.print(motor_value1);
+    Serial.print(" Motor2: "); Serial.print(motor_value2);
+    Serial.print(" Motor3: "); Serial.println(motor_value3);*/
+    /*Serial.print("Left: "); Serial.println(left);
+    Serial.print("Right: "); Serial.println(right);
+    Serial.print("Up: "); Serial.println(up);
+    Serial.print("Down: "); Serial.println(down);*/
+    /*Serial.print("Rx: "); Serial.print(Rx);
+    Serial.print(" Ry: "); Serial.print(Ry);
+    Serial.print(" Lx: "); Serial.print(Lx);
+    Serial.print(" Ly: "); Serial.println(Ly);*/
+    /*Serial.print(r);
+    Serial.print(",");
+    Serial.print(i);
+    Serial.print(",");
+    Serial.print(j);
+    Serial.print(",");
+    Serial.println(k);*/
+    /*Serial.print(",");
+    Serial.print(wx);
+    Serial.print(",");
+    Serial.print(wy);
+    Serial.print(",");
+    Serial.print(wz);
+    Serial.print(",");
+    Serial.print(ax);
+    Serial.print(",");
+    Serial.print(ay);
+    Serial.print(",");
+    Serial.println(az);*/
   }
-  q = cpp3d::quaternion(r, i, j, k);
-  float roll = atan2(2*(r*i + j*k), 1-2*(i*i + j*j)) * 180/M_PI;
-  float pitch = asin(2*(r*j - k*i)) * 180/M_PI;
-  
-  if (roll < -30 || roll > 30 || pitch < -30 || pitch > 30)
-  {
-    Serial.println("Drone is tilted too much, stopping motors.");
-    set_motor(0, 0);
-    set_motor(1, 0);
-    set_motor(2, 0);
-    set_motor(3, 0);
-    is_motor_running = false;
-    is_calibration = false;
-    calibration_done = false;
-    was_tilt = true;
-    roll = 0;
-    pitch = 0;
-    yaw = 0;
-    r = 1;
-    i = 0;
-    j = 0;
-    k = 0;
-    q_target = cpp3d::quaternion(1, 0, 0, 0);
-    integral_roll = 0;
-    integral_pitch = 0;
-    integral_yaw = 0;
-    Serial.println("Please calibrate the drone.");
-    return;
-  }
-
-  motor_speed = offset_motor_speed + map(Ly,-128, 128, -offset_motor_speed, 100-offset_motor_speed);
-
-  q_error = q.conjugate() * q_target;
-  q_error = q_error.normalize();
-  if(q_error.w < 0){
-    q_error = q_error.scalar(-1);
-  }
-
-  float w = constrain(q_error.w, -1.0f, 1.0f);
-  float angle = 2 * acos(w);
-  float s = sqrt(1 - w * w);
-  
-  cpp3d::vec3d axis(0, 0, 0);
-  if(s > 1e-6){
-    axis = cpp3d::vec3d(q_error.x / s, q_error.y / s, q_error.z / s);
-  }
-
-  integral_roll += axis.x * angle * dt;
-  integral_pitch += axis.y * angle * dt;
-  integral_yaw += axis.z * angle * dt;
-  
-  // 1 deg = 0.01745 rad
-  if(fabs(axis.x * angle) < 0.01745) integral_roll = 0;
-  if(fabs(axis.y * angle) < 0.01745) integral_pitch = 0;
-  // 5 deg = 0.0873 rad
-  if(fabs(axis.z * angle) < 0.0873) integral_yaw = 0;
-  /*Serial.print("integral_roll: ");
-  Serial.print(integral_roll);
-  Serial.print(", ");
-  Serial.print("integral_pitch: ");
-  Serial.print(integral_pitch);
-  Serial.print(", ");
-  Serial.print("integral_yaw: ");
-  Serial.println(integral_yaw);*/
-
-  M.x = -kq * axis.x * angle + -kw * wx -ki * integral_roll;
-  M.y = -kq * axis.y * angle + -kw * wy -ki * integral_pitch;
-  M.z = -kq_yaw * axis.z * angle - kw_yaw * wz -ki_yaw * integral_yaw; 
-
-  if(lidar->readData(distance, strength, temperature)){
-    Serial.print("Distance: ");
-    Serial.println(distance);
-  }
-
-  motor_value0 = (motor_speed + M.x + M.y + M.z);
-  motor_value1 = (motor_speed - M.x + M.y - M.z);
-  motor_value2 = (motor_speed - M.x - M.y + M.z);
-  motor_value3 = (motor_speed + M.x - M.y - M.z);
-
-  motor_value0 = constrain(motor_value0, 0, 100);
-  motor_value1 = constrain(motor_value1, 0, 100);
-  motor_value2 = constrain(motor_value2, 0, 100);
-  motor_value3 = constrain(motor_value3, 0, 100);
-  
-  set_motor(0, motor_value0);
-  set_motor(1, motor_value1);
-  set_motor(2, motor_value2);
-  set_motor(3, motor_value3);
-
-  /*Serial.print(q_target.w);
-  Serial.print(",");
-  Serial.print(q_target.x);
-  Serial.print(",");
-  Serial.print(q_target.y);
-  Serial.print(",");
-  Serial.print(q_target.z);
-  Serial.print(",");*/
-  /*Serial.print(" Motor0: "); Serial.print(motor_value0);
-  Serial.print(" Motor1: "); Serial.print(motor_value1);
-  Serial.print(" Motor2: "); Serial.print(motor_value2);
-  Serial.print(" Motor3: "); Serial.println(motor_value3);*/
-  /*Serial.print("Left: "); Serial.println(left);
-  Serial.print("Right: "); Serial.println(right);
-  Serial.print("Up: "); Serial.println(up);
-  Serial.print("Down: "); Serial.println(down);*/
-  /*Serial.print("Rx: "); Serial.print(Rx);
-  Serial.print(" Ry: "); Serial.print(Ry);
-  Serial.print(" Lx: "); Serial.print(Lx);
-  Serial.print(" Ly: "); Serial.println(Ly);*/
-  /*Serial.print(r);
-  Serial.print(",");
-  Serial.print(i);
-  Serial.print(",");
-  Serial.print(j);
-  Serial.print(",");
-  Serial.println(k);*/
-  /*Serial.print(",");
-  Serial.print(wx);
-  Serial.print(",");
-  Serial.print(wy);
-  Serial.print(",");
-  Serial.print(wz);
-  Serial.print(",");
-  Serial.print(ax);
-  Serial.print(",");
-  Serial.print(ay);
-  Serial.print(",");
-  Serial.println(az);*/
 }
