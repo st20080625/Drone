@@ -14,6 +14,7 @@ int Rx = 0;
 int Ry = 0;
 int Square = 0;
 int Circle = 0;
+int Triangle = 0;
 int prev_Circle = 0;
 int prev_Triangle = 0;
 int R1 = 0;
@@ -26,6 +27,7 @@ int left = 0;
 bool calibration_done = false;
 bool is_calibration = false;
 bool is_motor_running = false;
+bool prev_is_motor_running = false;
 bool was_tilt = false;
 
 void get_gamepad_data() {
@@ -57,8 +59,9 @@ float kq_yaw = 23; // 9
 float kw_yaw = 13; // 10
 float ki_yaw = 0;
 
-float hover_kp = 0;
+float hover_kp = 0.6;
 float hover_kd = 0;
+float hover_ki = 0;
 
 cpp3d::vec3d M(0, 0, 0);
 
@@ -101,12 +104,11 @@ sh2_SensorValue_t sensorValue;
 // frequenct = 2.67Khz (2441.41hz)
 // resolution = 15bit (32768)
 // period = 409.6 us
-void set_motor(int ch, float on_pulse_rate)
-{
+void set_motor(int ch, float on_pulse_rate) {
   float on_pulse_normalized = on_pulse_rate / 1000.0; //  0.0 ~ 1.0
   float pulse_width = (125.0 + on_pulse_normalized * 125.0);
-  //Serial.println(pulse_width);
-  float  duty = (pulse_width / 409.6) * 32768;
+  // Serial.println(pulse_width);
+  float duty = (pulse_width / 409.6) * 32768;
   uint16_t value = round(duty);
   ledcWrite(ch, value);
 }
@@ -138,7 +140,9 @@ uint16_t strength = 0;
 float temperature = 0.0;
 bool is_auto_hover = false;
 uint16_t offset_distance = 0;
-J uint16_t target_distance = 0;
+float target_distance = 0;
+uint16_t prev_distance = 0;
+uint16_t integral_distance = 0;
 
 void set_color(uint32_t color) {
   for (int i = 0; i < LED_COUNT; ++i) {
@@ -154,7 +158,7 @@ void calibrate_sensors() {
   }
   strip.show();
   Serial.println("Calibrating sensors. Keep the drone level...");
-  //delay(2000);
+  // delay(2000);
   float sum_r = 0;
   float sum_i = 0;
   float sum_j = 0;
@@ -223,6 +227,8 @@ void calibrate_sensors() {
 
   if (collected_distance > 0) {
     offset_distance = sum_distance / collected_distance;
+    prev_distance = offset_distance;
+    // Serial.println(target_distance);
   }
 
   Serial.println("Calibration complete!");
@@ -343,7 +349,7 @@ void setup() {
   set_motor(1, 0);
   set_motor(2, 0);
   set_motor(3, 0);
-  delay(1000);
+  delay(10);
 }
 
 void loop() {
@@ -392,15 +398,24 @@ void loop() {
   }
 
   if (Circle && !prev_Circle) {
+    prev_is_motor_running = is_motor_running;
     is_motor_running = !is_motor_running;
+  }
+  if (prev_is_motor_running) {
+    target_distance = 0;
   }
   prev_Circle = Circle;
 
   if (Triangle && !prev_Triangle && !is_motor_running) {
     is_auto_hover = !is_auto_hover;
-    if (is_auto_hover) {
-      strip.set_color(Lime);
-    }
+  }
+  prev_Triangle = Triangle;
+  if (is_auto_hover) {
+    set_color(Lime);
+  }
+
+  if (is_motor_running) {
+    set_color(Cyan);
   }
 
   strip.show();
@@ -484,8 +499,13 @@ void loop() {
       return;
     }
 
-    motor_speed = offset_motor_speed + map(Ly, -128, 128, -offset_motor_speed,
-                                           100 - offset_motor_speed);
+    if (Ly >= 0) {
+      motor_speed =
+          offset_motor_speed + map(Ly, 0, 127, 0, 100 - offset_motor_speed);
+    }
+    if (Ly < 0) {
+      motor_speed = map(Ly, -128, 0, 0, offset_motor_speed);
+    }
 
     q_error = q.conjugate() * q_target;
     q_error = q_error.normalize();
@@ -537,11 +557,16 @@ void loop() {
     motor_value2 = (motor_speed - M.x - M.y + M.z);
     motor_value3 = (motor_speed + M.x - M.y - M.z);
 
-    motor_value0 = constrain(motor_value0, 0, 100);
-    motor_value1 = constrain(motor_value1, 0, 100);
-    motor_value2 = constrain(motor_value2, 0, 100);
-    motor_value3 = constrain(motor_value3, 0, 100);
+    motor_value0 *= 10.0;
+    motor_value1 *= 10.0;
+    motor_value2 *= 10.0;
+    motor_value3 *= 10.0;
 
+    motor_value0 = constrain(motor_value0, 0, 1000.0);
+    motor_value1 = constrain(motor_value1, 0, 1000.0);
+    motor_value2 = constrain(motor_value2, 0, 1000.0);
+    motor_value3 = constrain(motor_value3, 0, 1000.0);
+    
     set_motor(0, motor_value0);
     set_motor(1, motor_value1);
     set_motor(2, motor_value2);
@@ -645,12 +670,58 @@ void loop() {
       integral_roll = 0;
       integral_pitch = 0;
       integral_yaw = 0;
+      offset_distance = 0;
+      target_distance = 0;
       Serial.println("Please calibrate the drone.");
       return;
     }
 
-    motor_speed = offset_motor_speed + map(Ly, -128, 128, -offset_motor_speed,
-                                           100 - offset_motor_speed);
+    if (Ly >= 0) {
+      motor_speed =
+          offset_motor_speed + map(Ly, 0, 127, 0, 100 - offset_motor_speed);
+    }
+    if (Ly < 0) {
+      motor_speed = map(Ly, -128, 0, 0, offset_motor_speed);
+    }
+    // Serial.println(motor_speed);
+    Serial.println(target_distance);
+
+    /*if (lidar->readData(distance, strength, temperature)) {
+      Serial.print("Distance: ");
+      Serial.println(distance);
+    }*/
+    lidar->readData(distance, strength, temperature);
+
+    if (up) {
+      if (target_distance <= 99) {
+        target_distance += 0.5;
+        Serial.println("up");
+      }
+    }
+    if (down) {
+      if (target_distance >= 1) {
+        target_distance -= 0.5;
+        Serial.println("down");
+      }
+    }
+
+    Serial.println(target_distance);
+
+    float target_distance_control_val =
+        target_distance + float(offset_distance);
+    // Serial.println(target_distance);
+
+    float motor_speed_p = hover_kp * (target_distance_control_val - distance);
+    float motor_speed_d = hover_kd * (distance - prev_distance) / dt;
+    integral_distance += (target_distance_control_val - distance) * dt;
+    if(abs(distance - prev_distance) < 5){
+      integral_distance = 0;
+    }
+    float motor_speed_i = hover_ki * integral_distance;
+    motor_speed = offset_motor_speed + motor_speed_p - motor_speed_d - motor_speed_i;
+    prev_distance = distance;
+
+    // Serial.println(motor_speed);
 
     q_error = q.conjugate() * q_target;
     q_error = q_error.normalize();
@@ -692,11 +763,6 @@ void loop() {
     M.y = -kq * axis.y * angle + -kw * wy - ki * integral_pitch;
     M.z = -kq_yaw * axis.z * angle - kw_yaw * wz - ki_yaw * integral_yaw;
 
-    if (lidar->readData(distance, strength, temperature)) {
-      Serial.print("Distance: ");
-      Serial.println(distance);
-    }
-
     motor_value0 = (motor_speed + M.x + M.y + M.z);
     motor_value1 = (motor_speed - M.x + M.y - M.z);
     motor_value2 = (motor_speed - M.x - M.y + M.z);
@@ -725,10 +791,14 @@ void loop() {
     Serial.print(",");
     Serial.print(q_target.z);
     Serial.print(",");*/
-    /*Serial.print(" Motor0: "); Serial.print(motor_value0);
-    Serial.print(" Motor1: "); Serial.print(motor_value1);
-    Serial.print(" Motor2: "); Serial.print(motor_value2);
-    Serial.print(" Motor3: "); Serial.println(motor_value3);*/
+    Serial.print(" Motor0: ");
+    Serial.print(motor_value0);
+    Serial.print(" Motor1: ");
+    Serial.print(motor_value1);
+    Serial.print(" Motor2: ");
+    Serial.print(motor_value2);
+    Serial.print(" Motor3: ");
+    Serial.println(motor_value3);
     /*Serial.print("Left: "); Serial.println(left);
     Serial.print("Right: "); Serial.println(right);
     Serial.print("Up: "); Serial.println(up);
