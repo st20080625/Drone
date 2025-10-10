@@ -47,15 +47,15 @@ void get_gamepad_data() {
 }
 
 float motor_speed;
-float offset_motor_speed = 50;
+float offset_motor_speed = 65;
 
 // kq = P gain, kw = D gain
 // roll, pitch -> PID
 // yaw -> PD
-float kq = 14;     // 13
-float kw = 10;     // 10
-float ki = 15;     // 25
-float kq_yaw = 23; // 9
+float kq = 10;     // 13
+float kw = 8;     // 10
+float ki = 12;     // 25
+float kq_yaw = 15; // 9
 float kw_yaw = 13; // 10
 float ki_yaw = 0;
 
@@ -693,13 +693,13 @@ void loop() {
     lidar->readData(distance, strength, temperature);
 
     if (up) {
-      if (target_distance <= 99) {
+      if (target_distance <= 99.5) {
         target_distance += 0.5;
         Serial.println("up");
       }
     }
     if (down) {
-      if (target_distance >= 1) {
+      if (target_distance >= 0.5) {
         target_distance -= 0.5;
         Serial.println("down");
       }
