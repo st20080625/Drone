@@ -7,6 +7,42 @@
 #include <esp_system.h>
 #include <math.h>
 #include <ps5Controller.h>
+#include <WiFi.h>
+#include <WiFiUdp.h>
+
+union FloatBytes {
+  float f;
+  uint8_t b[4];
+};
+
+const char* ssid = "Drone";
+const char* Raspi_Addr = "10.42.0.1";
+const int Raspi_Port = 8001;
+
+IPAddress local_IP(10, 42, 0, 2);
+IPAddress gateway(10, 42, 0, 1);
+IPAddress subnet(255, 255, 255, 0);
+
+WiFiUDP send_sock;
+
+uint8_t send_buffer[36];
+
+void init_wifi(){
+  if (!WiFi.config(local_IP, gateway, subnet)){
+    Serial.println("STA Failed to Configure");
+  }
+  WiFi.begin(ssid);
+  Serial.print("Connecting to  Raspi_AP");
+  while (WiFi.status() != WL_CONNECTED){
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+  Serial.println("Connected Raspi_AP");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+  send_sock.begin(Raspi_Port);
+}
 
 int Lx = 0;
 int Ly = 0;
@@ -287,6 +323,8 @@ void setup() {
   strip.setBrightness(50);
   strip.clear();
   strip.show();
+
+  init_wifi();
 
   ps5.begin("A0:FA:9C:2B:D4:DD"); // 24:a6:fa:a4:fe:fe, A0:FA:9C:2B:D4:DD
   Serial.println("PS5 Controller connectiong...");
