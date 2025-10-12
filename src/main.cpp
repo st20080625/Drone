@@ -10,11 +10,6 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 
-union FloatBytes {
-  float f;
-  uint8_t b[4];
-};
-
 const char* ssid = "Drone";
 const char* Raspi_Addr = "10.42.0.1";
 const int Raspi_Port = 8001;
@@ -25,7 +20,7 @@ IPAddress subnet(255, 255, 255, 0);
 
 WiFiUDP send_sock;
 
-uint8_t send_buffer[36];
+uint8_t send_buffer[40];
 
 void init_wifi(){
   if (!WiFi.config(local_IP, gateway, subnet)){
@@ -43,6 +38,23 @@ void init_wifi(){
   Serial.println(WiFi.localIP());
   send_sock.begin(Raspi_Port);
 }
+
+struct SensorPacket {
+  float r;
+  float i;
+  float j;
+  float k;
+  float acc_x;
+  float acc_y;
+  float acc_z;
+  float gyro_x;
+  float gyro_y;
+  float gyro_z;
+};
+
+SensorPacket send_packet;
+bool initialized_send_imu_data = false;
+unsigned long prev_send_time = 0;
 
 int Lx = 0;
 int Ly = 0;
@@ -286,6 +298,33 @@ float wx, wy, wz;
 float ax, ay, az;
 float yaw = 0;
 
+void SendImuData(){
+  if(!initialized_send_imu_data){
+    prev_send_time = millis();
+    initialized_send_imu_data = true;
+  }
+  unsigned long current_time = millis();
+  if((current_time - prev_send_time) < 10){ // send / 10ms = 100Hz
+    return;
+  }
+  prev_send_time = current_time;
+  send_packet.acc_x = ax;
+  send_packet.acc_y = ay;
+  send_packet.acc_z = az;
+  send_packet.gyro_x = wx;
+  send_packet.gyro_y = wy;
+  send_packet.gyro_z = wz;
+  send_packet.r = r;
+  send_packet.i = i;
+  send_packet.j = j;
+  send_packet.k = k;
+  memcpy(send_buffer, &send_packet, sizeof(send_packet));
+  
+  send_sock.beginPacket(Raspi_Addr, Raspi_Port);
+  send_sock.write(send_buffer, sizeof(send_packet));
+  send_sock.endPacket();
+}
+
 float roll_euler, pitch_euler, yaw_euler;
 void calc_target() {
   pitch_euler = map(Ry, -128, 127, -9, 9);
@@ -507,6 +546,7 @@ void loop() {
         az = sensorValue.un.accelerometer.z;
       }
     }
+    SendImuData();
     q = cpp3d::quaternion(r, i, j, k);
     float roll =
         atan2(2 * (r * i + j * k), 1 - 2 * (i * i + j * j)) * 180 / M_PI;
@@ -682,6 +722,7 @@ void loop() {
         az = sensorValue.un.accelerometer.z;
       }
     }
+    SendImuData();
     q = cpp3d::quaternion(r, i, j, k);
     float roll =
         atan2(2 * (r * i + j * k), 1 - 2 * (i * i + j * j)) * 180 / M_PI;
