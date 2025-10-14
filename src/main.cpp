@@ -12,15 +12,18 @@
 
 const char* ssid = "Drone";
 const char* Raspi_Addr = "10.42.0.1";
-const int Raspi_Port = 8001;
+const int Imu_Port = 8001;
+const int Log_Port = 8002;
 
 IPAddress local_IP(10, 42, 0, 2);
 IPAddress gateway(10, 42, 0, 1);
 IPAddress subnet(255, 255, 255, 0);
 
-WiFiUDP send_sock;
+WiFiUDP Imu_Sock;
+WiFiUDP Log_Sock;
 
-uint8_t send_buffer[40];
+uint8_t Imu_Buffer[40];
+uint8_t Log_Buffer[32];
 
 void init_wifi(){
   if (!WiFi.config(local_IP, gateway, subnet)){
@@ -36,7 +39,8 @@ void init_wifi(){
   Serial.println("Connected Raspi_AP");
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
-  send_sock.begin(Raspi_Port);
+  Imu_Sock.begin(Imu_Port);
+  Log_Sock.begin(Log_Port);
 }
 
 struct SensorPacket {
@@ -52,9 +56,22 @@ struct SensorPacket {
   float gyro_z;
 };
 
-SensorPacket send_packet;
+struct LogPacket{
+  float r;
+  float i;
+  float j;
+  float k;
+  float target_r;
+  float target_i;
+  float target_j;
+  float target_k;
+}
+
+SensorPacket imu_packet;
 bool initialized_send_imu_data = false;
 unsigned long prev_send_time = 0;
+
+LogPacket log_packet;
 
 int Lx = 0;
 int Ly = 0;
@@ -63,8 +80,10 @@ int Ry = 0;
 int Square = 0;
 int Circle = 0;
 int Triangle = 0;
+int Cross = 0;
 int prev_Circle = 0;
 int prev_Triangle = 0;
+int prev_Cross = 0;
 int R1 = 0;
 int L1 = 0;
 int up = 0;
@@ -77,6 +96,7 @@ bool is_calibration = false;
 bool is_motor_running = false;
 bool prev_is_motor_running = false;
 bool was_tilt = false;
+boll was_create_socket = false;
 
 void get_gamepad_data() {
   Lx = ps5.LStickX();
@@ -86,6 +106,7 @@ void get_gamepad_data() {
   Square = ps5.Square();
   Circle = ps5.Circle();
   Triangle = ps5.Triangle();
+  Cross = ps5.Cross();
   R1 = ps5.R1();
   L1 = ps5.L1();
   up = ps5.Up();
@@ -308,21 +329,48 @@ void SendImuData(){
     return;
   }
   prev_send_time = current_time;
-  send_packet.acc_x = ax;
-  send_packet.acc_y = ay;
-  send_packet.acc_z = az;
-  send_packet.gyro_x = wx;
-  send_packet.gyro_y = wy;
-  send_packet.gyro_z = wz;
-  send_packet.r = r;
-  send_packet.i = i;
-  send_packet.j = j;
-  send_packet.k = k;
-  memcpy(send_buffer, &send_packet, sizeof(send_packet));
+  imu_packet.acc_x = ax;
+  imu_packet.acc_y = ay;
+  imu_packet.acc_z = az;
+  imu_packet.gyro_x = wx;
+  imu_packet.gyro_y = wy;
+  imu_packet.gyro_z = wz;
+  imu_packet.r = r;
+  imu_packet.i = i;
+  imu_packet.j = j;
+  imu_packet.k = k;
+  memcpy(Imu_Buffer, &imu_packet, sizeof(imu_packet));
   
-  send_sock.beginPacket(Raspi_Addr, Raspi_Port);
-  send_sock.write(send_buffer, sizeof(send_packet));
-  send_sock.endPacket();
+  Imu_Sock.beginPacket(Raspi_Addr, Imu_Port);
+  Imu_Sock.write(Imu_Buffer, sizeof(imu_packet));
+  Imu_Sock.endPacket();
+}
+
+void SendLogData(){
+  if(!initialized_send_imu_data){
+    prev_send_time = millis();
+    initialized_send_imu_data = true;
+  }
+  unsigned long current_time = millis();
+  if((current_time - prev_send_time) < 10){ // send / 10ms = 100Hz
+    return;
+  }
+  prev_send_time = current_time;
+  log_packet.r = r;
+  log_packet.r = i;
+  log_packet.r = j;
+  log_packet.r = k;
+
+  log_packet.target_r = q_target.r;
+  log_packet.target_i = q_target.i;
+  log_packet.target_j = q_target.j;
+  log_packet.target_k = q_target.k;
+
+  memcpy(Log_Buffer, &log_packet, sizeof(log_packet));
+  
+  Imu_Sock.beginPacket(Raspi_Addr, Log_Port);
+  Imu_Sock.write(Log_Buffer, sizeof(log_packet));
+  Imu_Sock.endPacket();
 }
 
 float roll_euler, pitch_euler, yaw_euler;
@@ -363,7 +411,7 @@ void setup() {
   strip.clear();
   strip.show();
 
-  init_wifi();
+  //init_wifi();
 
   ps5.begin("A0:FA:9C:2B:D4:DD"); // 24:a6:fa:a4:fe:fe, A0:FA:9C:2B:D4:DD
   Serial.println("PS5 Controller connectiong...");
@@ -431,6 +479,9 @@ void setup() {
 
 void loop() {
   set_color(Purple);
+  if (WiFi.status() != WL_CONNECTED){
+    was_create_socket = false;
+  }
   if (!ps5.isConnected()) {
     set_motor(0, 0);
     set_motor(1, 0);
@@ -510,6 +561,12 @@ void loop() {
     return;
   }
 
+  if(calibration_done && Cross && !prev_Cross && !was_create_socket){
+    init_wifi();
+    was_create_socket = true;
+    Serial.println("Create socket");
+  }
+
   if (!is_motor_running) {
     set_motor(0, 0);
     set_motor(1, 0);
@@ -546,7 +603,8 @@ void loop() {
         az = sensorValue.un.accelerometer.z;
       }
     }
-    SendImuData();
+    if(was_create_socket){SendImuData()};
+    if(was_create_socket){SendLogData()};
     q = cpp3d::quaternion(r, i, j, k);
     float roll =
         atan2(2 * (r * i + j * k), 1 - 2 * (i * i + j * j)) * 180 / M_PI;
@@ -722,7 +780,8 @@ void loop() {
         az = sensorValue.un.accelerometer.z;
       }
     }
-    SendImuData();
+    if(was_create_socket){SendImuData()};
+    if(was_create_socket){SendLogData()};
     q = cpp3d::quaternion(r, i, j, k);
     float roll =
         atan2(2 * (r * i + j * k), 1 - 2 * (i * i + j * j)) * 180 / M_PI;
