@@ -1,0 +1,3 @@
+sudo chmod 777 /dev/ttyUSB0
+ros2 launch sllidar_ros2 sllidar_a1_launch.py  <- rplidar_launch
+ros2 launch sllidar_ros2 rplidar_cartographer.launch.py > /dev/null 2>&1 &  <- cartographer_launch
