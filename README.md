@@ -33,7 +33,8 @@
 ---
 
 ## 飛行映像
-![飛行動画](video/drone.mp4)
+[![Watch the video](https://raw.githubusercontent.com/st20080625/Drone.git)](https://raw.githubusercontent.com/st20080625/Drone/video/video.mp4)
+
 ---
 
 ## ハード構成
