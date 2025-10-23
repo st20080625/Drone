@@ -65,7 +65,7 @@ struct LogPacket{
   float target_i;
   float target_j;
   float target_k;
-}
+};
 
 SensorPacket imu_packet;
 bool initialized_send_imu_data = false;
@@ -96,7 +96,7 @@ bool is_calibration = false;
 bool is_motor_running = false;
 bool prev_is_motor_running = false;
 bool was_tilt = false;
-boll was_create_socket = false;
+bool was_create_socket = false;
 
 void get_gamepad_data() {
   Lx = ps5.LStickX();
@@ -357,14 +357,14 @@ void SendLogData(){
   }
   prev_send_time = current_time;
   log_packet.r = r;
-  log_packet.r = i;
-  log_packet.r = j;
-  log_packet.r = k;
+  log_packet.i = i;
+  log_packet.j = j;
+  log_packet.k = k;
 
-  log_packet.target_r = q_target.r;
-  log_packet.target_i = q_target.i;
-  log_packet.target_j = q_target.j;
-  log_packet.target_k = q_target.k;
+  log_packet.target_r = q_target.w;
+  log_packet.target_i = q_target.x;
+  log_packet.target_j = q_target.y;
+  log_packet.target_k = q_target.z;
 
   memcpy(Log_Buffer, &log_packet, sizeof(log_packet));
   
@@ -413,7 +413,7 @@ void setup() {
 
   //init_wifi();
 
-  ps5.begin("A0:FA:9C:2B:D4:DD"); // 24:a6:fa:a4:fe:fe, A0:FA:9C:2B:D4:DD
+  ps5.begin("A0:FA:9C:2B:D4:DD"); // change here your Mac address
   Serial.println("PS5 Controller connectiong...");
 
   Wire.begin(SDA_PIN, SCL_PIN);
@@ -603,8 +603,8 @@ void loop() {
         az = sensorValue.un.accelerometer.z;
       }
     }
-    if(was_create_socket){SendImuData()};
-    if(was_create_socket){SendLogData()};
+    if(was_create_socket){SendImuData();};
+    if(was_create_socket){SendLogData();};
     q = cpp3d::quaternion(r, i, j, k);
     float roll =
         atan2(2 * (r * i + j * k), 1 - 2 * (i * i + j * j)) * 180 / M_PI;
@@ -780,8 +780,8 @@ void loop() {
         az = sensorValue.un.accelerometer.z;
       }
     }
-    if(was_create_socket){SendImuData()};
-    if(was_create_socket){SendLogData()};
+    if(was_create_socket){SendImuData();};
+    if(was_create_socket){SendLogData();};
     q = cpp3d::quaternion(r, i, j, k);
     float roll =
         atan2(2 * (r * i + j * k), 1 - 2 * (i * i + j * j)) * 180 / M_PI;

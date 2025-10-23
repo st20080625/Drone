@@ -1,1 +1,4 @@
 .pio/
+slam_raspi/build/
+slam_raspi/install/
+sla_raspi/log/
