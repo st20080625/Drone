@@ -1,7 +1,8 @@
+
+https://github.com/user-attachments/assets/19884cdc-6754-4c71-b9a3-a9bbbe4b7720
 # 自作ドローン
 
 ## 概要
-
 このプロジェクトは、自作ドローンの設計・製作・制御を目的としています。各種パーツの選定、組み立て、プログラムによる制御方法についてまとめています。
 
 ---
@@ -33,7 +34,7 @@
 ---
 
 ## 飛行映像
-[![Watch the video](https://raw.githubusercontent.com/st20080625/Drone/master/images/drone.jpg)](https://raw.githubusercontent.com/st20080625/Drone/master/video/drone.mp4)
+https://github.com/user-attachments/assets/ef20d2a3-a51d-4bfe-b37a-9de0bfae4551
 
 ---
 
