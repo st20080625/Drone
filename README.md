@@ -33,7 +33,7 @@
 ---
 
 ## 飛行映像
-[![Watch the video](https://raw.githubusercontent.com/st20080625/Drone.git)](https://raw.githubusercontent.com/st20080625/Drone/video/drone.mp4)
+[![Watch the video](https://raw.githubusercontent.com/st20080625/Drone/master/images/drone.jpg)](https://raw.githubusercontent.com/st20080625/Drone/master/video/drone.mp4)
 
 ---
 
