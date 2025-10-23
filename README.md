@@ -1,5 +1,4 @@
 
-https://github.com/user-attachments/assets/19884cdc-6754-4c71-b9a3-a9bbbe4b7720
 # 自作ドローン
 
 ## 概要
