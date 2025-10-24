@@ -1855,10 +1855,6 @@
 		(uuid "73b07936-ab8e-4d8e-89e6-ea9f7802d6c0")
 	)
 	(no_connect
-		(at 156.21 99.06)
-		(uuid "7d8b354e-6539-42e3-87d3-b579d5cf0d65")
-	)
-	(no_connect
 		(at 138.43 35.56)
 		(uuid "84d08b0c-3ed1-4e24-9c15-2594bb7b356d")
 	)
